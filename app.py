@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 import matplotlib.pyplot as plt
 
-st.set_page_config(page_title="Professional Plotter", layout="wide")
+st.set_page_config(page_title="Experimentalist: Plotter", layout="wide")
 
 st.title("Experimentalist: Plotter")
 
@@ -45,6 +45,29 @@ with left_col:
     if not data_dict:
         st.stop()
 
+    # =============================
+    # Palette Management
+    # =============================
+
+    if "palettes" not in st.session_state:
+        st.session_state.palettes = {
+            "Default": [
+                "#1f77b4",
+                "#ff7f0e",
+                "#2ca02c",
+                "#d62728",
+                "#9467bd",
+                "#8c564b",
+                "#e377c2",
+                "#7f7f7f",
+                "#bcbd22",
+                "#17becf",
+            ]
+        }
+
+    if "active_palette" not in st.session_state:
+        st.session_state.active_palette = "Default"
+
 
     # =============================
     # Initialize Colour Groups
@@ -52,18 +75,7 @@ with left_col:
 
     if "color_groups" not in st.session_state:
 
-        default_colors = [
-            "#1f77b4",
-            "#ff7f0e",
-            "#2ca02c",
-            "#d62728",
-            "#9467bd",
-            "#8c564b",
-            "#e377c2",
-            "#7f7f7f",
-            "#bcbd22",
-            "#17becf",
-        ]
+        default_colors = st.session_state.palettes[st.session_state.active_palette]
 
         st.session_state.color_groups = []
 
@@ -91,18 +103,7 @@ with left_col:
     ]
 
     # Add new files as new individual groups
-    default_colors = [
-        "#1f77b4",
-        "#ff7f0e",
-        "#2ca02c",
-        "#d62728",
-        "#9467bd",
-        "#8c564b",
-        "#e377c2",
-        "#7f7f7f",
-        "#bcbd22",
-        "#17becf",
-    ]
+    default_colors = st.session_state.palettes[st.session_state.active_palette]
 
     for i, f in enumerate(all_files):
         if f not in assigned_files:
@@ -202,15 +203,118 @@ with left_col:
         if f not in st.session_state.file_order:
             st.session_state.file_order.append(f)
 
+    # =============================
+    # Palette Editor
+    # =============================
+
+    st.subheader("Colour Palettes")
+
+    palette_names = list(st.session_state.palettes.keys())
+
+    # Select active palette
+    selected_palette = st.selectbox(
+        "Active Palette",
+        palette_names,
+        index=palette_names.index(st.session_state.active_palette)
+    )
+
+    st.session_state.active_palette = selected_palette
+
+    # Display colours in selected palette
+    current_palette = st.session_state.palettes[selected_palette]
+
+    st.markdown("**Edit Palette Colours**")
+
+    cols = st.columns(5)
+    for i, col in enumerate(current_palette):
+        new_color = cols[i % 5].color_picker(
+            f"",
+            col,
+            key=f"palette_{selected_palette}_{i}",
+            label_visibility="collapsed"
+        )
+        current_palette[i] = new_color
+
+    if st.button("Apply Palette to Groups"):
+
+        palette = st.session_state.palettes[st.session_state.active_palette]
+
+        for i, group in enumerate(st.session_state.color_groups):
+
+            new_color = palette[i % len(palette)]
+
+            group["color"] = new_color
+            st.session_state[f"group_color_{i}"] = new_color
+
+        st.rerun()
+
+    # Add colour to palette
+    if st.button("➕ Add Colour to Palette"):
+        current_palette.append("#000000")
+        st.rerun()
+
+    # Create new palette
+    new_palette_name = st.text_input("New Palette Name")
+
+    if st.button("Create New Palette"):
+        if new_palette_name and new_palette_name not in st.session_state.palettes:
+            st.session_state.palettes[new_palette_name] = ["#1f77b4"]
+            st.session_state.active_palette = new_palette_name
+            st.rerun()
+
+    # =============================
+    # Remove Empty Groups (keep at least one alive)
+    # =============================
+
+    cleaned = []
+
+    for group in st.session_state.color_groups:
+
+        # Keep if it has files
+        if len(group["files"]) > 0:
+            group.pop("just_created", None)
+            cleaned.append(group)
+
+        # Keep if it was just created
+        elif group.get("just_created", False):
+            cleaned.append(group)
+
+    st.session_state.color_groups = cleaned
+
     st.subheader("Colour Groups")
 
+    # Ensure widget colour state exists
+    for i, group in enumerate(st.session_state.color_groups):
+        key = f"group_color_{i}"
+        if key not in st.session_state:
+            st.session_state[key] = group["color"]
+
     if st.button("➕ Add Colour Group"):
-        new_index = len(st.session_state.color_groups) + 1
+
+        palette = st.session_state.palettes[st.session_state.active_palette]
+
+        used_colours = [g["color"] for g in st.session_state.color_groups]
+
+        next_color = None
+        for colour in palette:
+            if colour not in used_colours:
+                next_color = colour
+                break
+
+        if next_color is None:
+            next_color = palette[len(st.session_state.color_groups) % len(palette)]
+
+        new_index = len(st.session_state.color_groups)
+
         st.session_state.color_groups.append({
-            "name": f"Group {new_index}",
-            "color": "#ff7f0e",
-            "files": []
+            "name": f"Group {new_index + 1}",
+            "color": next_color,
+            "files": [],
+            "just_created": True   # 🔥 important
         })
+
+        st.session_state[f"group_color_{new_index}"] = next_color
+
         st.rerun()
 
     # =============================
@@ -225,17 +329,30 @@ with left_col:
         header_cols = st.columns([3, 1])
 
         # Editable group name
-        group["name"] = header_cols[0].text_input(
+        new_name = header_cols[0].text_input(
             "Group Name",
             group["name"],
             key=f"group_name_{g_index}"
         )
 
+        if new_name != group["name"]:
+            old_name = group["name"]
+            group["name"] = new_name
+
+            # 🔥 Update all file move dropdown states
+            for filename in data_dict.keys():
+                move_key = f"move_{filename}"
+                if st.session_state.get(move_key) == old_name:
+                    st.session_state[move_key] = new_name
+
+            st.rerun()
+
         # Group colour picker
+        color_key = f"group_color_{g_index}"
+
         group["color"] = header_cols[1].color_picker(
             "Colour",
-            group["color"],
-            key=f"group_color_{g_index}"
+            key=color_key
         )
 
         st.markdown(f"### {group['name']}")
